@@ -32,7 +32,7 @@ func main() {
 	hmacker := hmac.New(sha256.New, []byte(password))
 	seed := hmacker.Sum(salt[:])
 
-	pub, priv, err := ed25519.GenerateKey(bytes.NewReader(seed))
+	pub, _, err := ed25519.GenerateKey(bytes.NewReader(seed))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -85,8 +85,24 @@ func main() {
 	if !ok || challenge == "" {
 		log.Fatal("No challenge!")
 	}
+	hexSalt, ok = challengeAuth["salt"]
+	if !ok || hexSalt == "" {
+		log.Fatal("No salt!")
+	}
+	salt2, err := hex.DecodeString(hexSalt)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	sig := ed25519.Sign(priv, []byte(challenge))
+	hmacker2 := hmac.New(sha256.New, []byte(password))
+	seed2 := hmacker2.Sum(salt2)
+	pub2, priv2, err := ed25519.GenerateKey(bytes.NewReader(seed2))
+	if err != nil {
+		log.Fatal(err)
+	}
+	hexPub2 := hex.EncodeToString(pub2[:])
+
+	sig := ed25519.Sign(priv2, []byte(challenge))
 	hexSig := hex.EncodeToString(sig[:])
 
 	// 4. sign-in
@@ -94,8 +110,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("Signing for [%s] with challenge [%s], sig is [%s]\n", hexPub, challenge, hexSig)
-	req.Header.Set("Authorization", fmt.Sprintf("Challenge challenge=%s, response=%s, pub=%s", challenge, hexSig, hexPub))
+	log.Printf("Signing for [%s] with challenge [%s], sig is [%s]\n", hexPub2, challenge, hexSig)
+	req.Header.Set("Authorization", fmt.Sprintf("Challenge challenge=%s, response=%s, pub=%s", challenge, hexSig, hexPub2))
 
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
