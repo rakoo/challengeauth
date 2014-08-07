@@ -1,0 +1,10 @@
+To test:
+
+- Run main.go in a terminal:
+
+    $ go run main.go
+
+- Run client/main.go in another terminal with a password:
+
+    $ cd client
+    $ go run main.go <password>
