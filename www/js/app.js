@@ -7,19 +7,17 @@ var Register = React.createClass({
     var login = this.refs.login.getDOMNode().value
     var password = this.refs.password.getDOMNode().value
 
-    // Standard Uint8Array...
-    var salt = nacl.randomBytes(32)
-    // ... but SJCL wants a custom bitarray
-    var sjclSalt = sjcl.codec.utf8String.toBits(salt)
-
-    var privateKey = Uint8Array(sjcl.misc.pbkdf2(password, sjclSalt, 1000, 32 * 32))
-    var pubKey = nacl.box.keyPair.fromSecretKey(privateKey).secretKey
+    var salt = sjcl.random.randomWords(8)
+    var seed = Uint8Array(sjcl.misc.pbkdf2(password, salt, 1000, 32 * 32))
+    var pubKey = nacl.sign.keyPair.fromSeed(seed).publicKey
 
     toSend = {
       login: login,
-      salt: nacl.util.encodeBase64(salt),
+      salt: sjcl.codec.base64.fromBits(salt),
       pubKey: nacl.util.encodeBase64(pubKey)
     }
+
+    console.log("Registering:", JSON.stringify(toSend))
 
     $.post("/register", toSend, function(o, st) {
       console.log(o, st)
@@ -56,22 +54,22 @@ var Login = React.createClass({
     var login = this.refs.login.getDOMNode().value
     var password = this.refs.password.getDOMNode().value
 
-    // Standard Uint8Array...
-    var salt = nacl.randomBytes(32)
-    // ... but SJCL wants a custom bitarray
-    var sjclSalt = sjcl.codec.utf8String.toBits(salt)
+    $.post("/login", {login: login}, function(data) {
+      var challenge = JSON.parse(data)
 
-    var privateKey = Uint8Array(sjcl.misc.pbkdf2(password, sjclSalt, 1000, 32 * 32))
-    var pubKey = nacl.box.keyPair.fromSecretKey(privateKey).secretKey
+      var salt = sjcl.codec.base64.toBits(challenge.salt)
+      var seed = Uint8Array(sjcl.misc.pbkdf2(password, salt, 1000, 32 * 32))
+      var secretKey = nacl.sign.keyPair.fromSeed(seed).secretKey
 
-    toSend = {
-      login: login,
-      salt: nacl.util.encodeBase64(salt),
-      pubKey: nacl.util.encodeBase64(pubKey)
-    }
+      var token = nacl.util.decodeBase64(challenge.token)
+      var response = nacl.sign(token, secretKey)
 
-    $.post("/login", toSend, function(o, st) {
-      console.log(o, st)
+      $.post("/login", {response: nacl.util.encodeBase64(response)}, function(o, data) {
+        if (o != "success") {
+          console.log("Couldn't log in!", data)
+        }
+      })
+
     })
   },
 
