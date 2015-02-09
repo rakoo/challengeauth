@@ -1,10 +1,11 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
-	"math/rand"
 	"net/http"
 )
 
@@ -16,18 +17,6 @@ type user struct {
 
 // A map from login to user
 var users map[string]*user = make(map[string]*user)
-
-func pickSalt() string {
-	idx := rand.Int31n(int32(len(users)))
-	count := int32(0)
-	for _, u := range users {
-		if count == idx {
-			return u.Salt
-		}
-		count++
-	}
-	return ""
-}
 
 func main() {
 	http.Handle("/", staticHandler)
@@ -59,21 +48,21 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		token := "token"
-		defaultSalt := pickSalt()
+		var tokenRaw [32]byte
+		rand.Read(tokenRaw[:])
+		token := base64.StdEncoding.EncodeToString(tokenRaw[:])
+
+		var defaultSaltRaw [32]byte
+		rand.Read(defaultSaltRaw[:])
+		defaultSalt := base64.StdEncoding.EncodeToString(defaultSaltRaw[:])
 
 		login := r.Form.Get("login")
 		response := r.Form.Get("response")
 		if response == "" {
 			u, ok := users[login]
-			var salt string
+			salt := defaultSalt
 			if ok {
 				salt = u.Salt
-				log.Printf("Returning existing salt of %s: %s\n", u.Login,
-					salt)
-			} else {
-				salt = defaultSalt
-				log.Printf("Returning defaultSalt: %s\n", salt)
 			}
 			err := json.NewEncoder(w).Encode(challenge{token, salt})
 			if err != nil {
