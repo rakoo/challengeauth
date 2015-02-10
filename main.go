@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+
+	"github.com/agl/ed25519"
 )
 
 type user struct {
@@ -27,9 +29,23 @@ func main() {
 	http.ListenAndServe(":8080", nil)
 }
 
-var staticHandler = http.FileServer(http.Dir("www"))
-var registerStaticHandler = http.StripPrefix("/register", staticHandler)
-var loginStaticHandler = http.StripPrefix("/login", staticHandler)
+// The static handlers
+var (
+	staticHandler         = http.FileServer(http.Dir("www"))
+	registerStaticHandler = http.StripPrefix("/register", staticHandler)
+	loginStaticHandler    = http.StripPrefix("/login", staticHandler)
+)
+
+// Signing stuff
+var signingPubKey, signingKey = getSigningKey()
+
+func getSigningKey() (*[ed25519.PublicKeySize]byte, *[ed25519.PrivateKeySize]byte) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return pub, priv
+}
 
 type challenge struct {
 	Token string `json:"token"`
@@ -48,32 +64,85 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		var tokenRaw [32]byte
-		rand.Read(tokenRaw[:])
-		token := base64.StdEncoding.EncodeToString(tokenRaw[:])
-
-		var defaultSaltRaw [32]byte
-		rand.Read(defaultSaltRaw[:])
-		defaultSalt := base64.StdEncoding.EncodeToString(defaultSaltRaw[:])
-
 		login := r.Form.Get("login")
-		response := r.Form.Get("response")
-		if response == "" {
-			u, ok := users[login]
-			salt := defaultSalt
-			if ok {
-				salt = u.Salt
-			}
-			err := json.NewEncoder(w).Encode(challenge{token, salt})
-			if err != nil {
-				log.Println(err)
-				http.Error(w, "Error with your request", http.StatusBadRequest)
-				return
-			}
+		token := r.Form.Get("token")
+		sig := r.Form.Get("sig")
+		if token == "" && sig == "" {
+			replyWithChallenge(w, login)
 		} else {
+			checkAuth(w, login, token, sig)
 		}
+		return
 	default:
 		http.Error(w, "Verb not understood", http.StatusBadRequest)
+	}
+}
+
+func replyWithChallenge(w http.ResponseWriter, login string) {
+
+	var defaultSaltRaw [32]byte
+	rand.Read(defaultSaltRaw[:])
+	salt := base64.StdEncoding.EncodeToString(defaultSaltRaw[:])
+
+	u, ok := users[login]
+	if ok {
+		salt = u.Salt
+	}
+
+	var token [32]byte
+	rand.Read(token[:])
+	sig := ed25519.Sign(signingKey, token[:])
+
+	signedTokenRaw := make([]byte, len(token)+len(sig))
+	copy(signedTokenRaw, token[:])
+	copy(signedTokenRaw[len(token):], sig[:])
+	signedToken := base64.StdEncoding.EncodeToString(signedTokenRaw)
+
+	err := json.NewEncoder(w).Encode(challenge{signedToken, salt})
+	if err != nil {
+		log.Println(err)
+		http.Error(w, "Error with your request", http.StatusBadRequest)
+	}
+}
+
+func checkAuth(w http.ResponseWriter, login, token, sig string) {
+	tokenRaw, err := base64.StdEncoding.DecodeString(token)
+	if err != nil {
+		log.Println(err)
+		http.Error(w, "Error with your request", http.StatusBadRequest)
+		return
+	}
+
+	sigRaw, err := base64.StdEncoding.DecodeString(sig)
+	if err != nil {
+		log.Println(err)
+		http.Error(w, "Error with your request", http.StatusBadRequest)
+		return
+	}
+
+	var sigForVerif [ed25519.SignatureSize]byte
+	copy(sigForVerif[:], sigRaw[:])
+
+	user, ok := users[login]
+	if !ok {
+		http.Error(w, "Bad auth", http.StatusUnauthorized)
+		return
+	}
+
+	userPubKeyRaw, err := base64.StdEncoding.DecodeString(user.PubKey)
+	if err != nil || len(userPubKeyRaw) != ed25519.PublicKeySize {
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+	var userPubKey [ed25519.PublicKeySize]byte
+	copy(userPubKey[:], userPubKeyRaw)
+
+	ok = ed25519.Verify(&userPubKey, tokenRaw, &sigForVerif)
+	if ok {
+		log.Printf("%s logged in\n", login)
+	} else {
+		log.Printf("%s didn't log in", login)
+		http.Error(w, "Bad auth", http.StatusUnauthorized)
 	}
 }
 

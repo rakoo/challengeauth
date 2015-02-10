@@ -62,11 +62,19 @@ var Login = React.createClass({
       var secretKey = nacl.sign.keyPair.fromSeed(seed).secretKey
 
       var token = nacl.util.decodeBase64(challenge.token)
-      var response = nacl.sign(token, secretKey)
+      var sig = nacl.sign.detached(token, secretKey)
 
-      $.post("/login", {response: nacl.util.encodeBase64(response)}, function(o, data) {
-        if (o != "success") {
-          console.log("Couldn't log in!", data)
+      var toSend = {
+        login: login,
+        token: challenge.token,
+        sig: nacl.util.encodeBase64(sig),
+      }
+
+      $.post("/login", toSend, function(o, data) {
+        if (data == "success") {
+          console.log("Logged in!")
+        } else {
+          console.log("Couldn't log in!")
         }
       })
 
