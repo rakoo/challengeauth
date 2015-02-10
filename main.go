@@ -139,7 +139,21 @@ func checkAuth(w http.ResponseWriter, login, token, sig string) {
 
 	ok = ed25519.Verify(&userPubKey, tokenRaw, &sigForVerif)
 	if ok {
-		log.Printf("%s logged in\n", login)
+		if len(tokenRaw) != 32+ed25519.SignatureSize {
+			http.Error(w, "Bad token", http.StatusUnauthorized)
+			return
+		}
+		ourToken := tokenRaw[:len(tokenRaw)-ed25519.SignatureSize]
+		ourSig := tokenRaw[len(tokenRaw)-ed25519.SignatureSize:]
+		var ourSigForVerif [ed25519.SignatureSize]byte
+		copy(ourSigForVerif[:], ourSig)
+
+		ok = ed25519.Verify(signingPubKey, ourToken, &ourSigForVerif)
+		if !ok {
+			http.Error(w, "Bad token", http.StatusUnauthorized)
+			return
+		}
+		log.Printf("%s just logged in\n", login)
 	} else {
 		log.Printf("%s didn't log in", login)
 		http.Error(w, "Bad auth", http.StatusUnauthorized)
